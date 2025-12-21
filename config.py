@@ -1,93 +1,160 @@
 """
-Global configuration for the pygame Minesweeper game.
+Core game logic for Minesweeper.
 
-This module centralizes all tunable settings used by both the logic layer
-(only grid sizes and counts) and the presentation layer (colors, fonts,
-layout metrics). Keeping these in one place helps tweak gameplay and visuals
-without touching logic or rendering code.
-
-Groups:
-- Grid and display: board dimensions, cell size, margins, derived window size
-- Colors: palette for cells, numbers, flags, overlays
-- Text/UI: font sizes for body, header, and result
-- Input: mouse button mappings
-- Behavior: highlight duration, overlay alpha
+This module contains pure domain logic without any pygame or pixel-level
+concerns. It defines:
+- CellState: the state of a single cell
+- Cell: a cell positioned by (col,row) with an attached CellState
+- Board: grid management, mine placement, adjacency computation, reveal/flag
 """
 
-# Display settings
-fps = 60
+import random
+from typing import List, Tuple
 
-# Grid settings
-cols = 16
-rows = 16
-num_mines = 40
 
-# Cell size and margins
-cell_size = 32
-margin_left = 20
-margin_top = 60
-margin_right = 20
-margin_bottom = 20
+class CellState:
+    """Mutable state of a single cell."""
 
-# Derived display dimension
-width = margin_left + cols * cell_size + margin_right
-height = margin_top + rows * cell_size + margin_bottom
+    def __init__(self, is_mine: bool = False, is_revealed: bool = False, is_flagged: bool = False, adjacent: int = 0):
+        self.is_mine = is_mine
+        self.is_revealed = is_revealed
+        self.is_flagged = is_flagged
+        self.adjacent = adjacent
 
-display_dimension = (width, height)
 
-# Colors
-color_bg = (24, 26, 27)
-color_grid = (60, 64, 67)
-color_cell_hidden = (40, 44, 52)
-color_cell_revealed = (225, 228, 232)
-color_cell_mine = (220, 0, 0)
-color_flag = (255, 215, 0)
-color_text = (20, 20, 20)
-color_text_inv = (240, 240, 240)
-color_header_text = (240, 240, 240)
-color_header = (32, 34, 36)
-color_highlight = (70, 130, 180)
-color_result = (242, 242, 0)
+class Cell:
+    """Logical cell positioned on the board by column and row."""
 
-# Number colors 1~8
-number_colors = {
-   1: (0, 0, 255),      # 파란색 (Blue)
-    2: (0, 128, 0),     # 초록색 (Green)
-    3: (255, 0, 0),     # 빨간색 (Red)
-    4: (0, 0, 128),     # 남색 (Dark Blue)
-    5: (128, 0, 0),     # 갈색 (Maroon)
-    6: (0, 128, 128),   # 청록색 (Teal)
-    7: (0, 0, 0),       # 검정색 (Black)
-    8: (128, 128, 128)  # 회색 (Gray)
-}
+    def __init__(self, col: int, row: int):
+        self.col = col
+        self.row = row
+        self.state = CellState()
 
-# Text / UI
-font_name = None  # default pygame font
-font_size = 22
-header_font_size = 24
-result_font_size = 64
 
-# Input
-mouse_left = 1
-mouse_middle = 2
-mouse_right = 3
+class Board:
+    """Minesweeper board state and rules."""
 
-# Highlight behavior (milliseconds)
-highlight_duration_ms = 600
+    def __init__(self, cols: int, rows: int, mines: int):
+        self.cols = cols
+        self.rows = rows
+        self.num_mines = mines
+        self.cells: List[Cell] = [Cell(c, r) for r in range(rows) for c in range(cols)]
+        self._mines_placed = False
+        self.revealed_count = 0
+        self.game_over = False
+        self.win = False
 
-# Overlay alpha for result background (0~255)
-result_overlay_alpha = 120
+    def index(self, col: int, row: int) -> int:
+        """Return the flat list index for (col,row)."""
+        return row * self.cols + col
 
-# Misc
-title = "Minesweeper"
+    def is_inbounds(self, col: int, row: int) -> bool:
+        return 0 <= col < self.cols and 0 <= row < self.rows
 
-# 난이도 설정 (가로, 세로, 지뢰 수)
-difficulties = {
-    'easy': {'cols': 9, 'rows': 9, 'num_mines': 10},
-    'medium': {'cols': 16, 'rows': 16, 'num_mines': 40},
-    'hard': {'cols': 30, 'rows': 16, 'num_mines': 99}
-}
+    def neighbors(self, col: int, row: int) -> List[Tuple[int, int]]:
+        deltas = [
+            (-1, -1), (0, -1), (1, -1),
+            (-1, 0), (1, 0),
+            (-1, 1), (0, 1), (1, 1),
+        ]
+        result = []
+        for dc, dr in deltas:
+            new_col, new_row = col + dc, row + dr
+            if self.is_inbounds(new_col, new_row):
+                result.append((new_col, new_row))
+        return result
 
-# 기본 난이도 설정
-current_difficulty = 'easy'
+    def place_mines(self, safe_col: int, safe_row: int) -> None:
+        """Place mines ensuring the first click and its neighbors are safe."""
+        all_positions = [(c, r) for r in range(self.rows) for c in range(self.cols)]
+        # Forbidden set includes the clicked cell and all its immediate neighbors
+        forbidden = {(safe_col, safe_row)} | set(self.neighbors(safe_col, safe_row))
+        pool = [p for p in all_positions if p not in forbidden]
+        
+        # Guard against requested mine count exceeding available space
+        actual_mines = min(self.num_mines, len(pool))
+        mine_positions = random.sample(pool, actual_mines)
+        
+        for mc, mr in mine_positions:
+            self.cells[self.index(mc, mr)].state.is_mine = True
+            
+        # Compute adjacency
+        for r in range(self.rows):
+            for c in range(self.cols):
+                cell = self.cells[self.index(c, r)]
+                if not cell.state.is_mine:
+                    count = 0
+                    for nc, nr in self.neighbors(c, r):
+                        if self.cells[self.index(nc, nr)].state.is_mine:
+                            count += 1
+                    cell.state.adjacent = count
 
+        self._mines_placed = True
+
+    def reveal(self, col: int, row: int) -> None:
+        """Reveal a cell and handle flood fill logic."""
+        if not self.is_inbounds(col, row) or self.game_over or self.win:
+            return
+            
+        idx = self.index(col, row)
+        cell = self.cells[idx]
+        
+        if cell.state.is_revealed or cell.state.is_flagged:
+            return
+            
+        if not self._mines_placed:
+            self.place_mines(col, row)
+            
+        cell.state.is_revealed = True
+        self.revealed_count += 1
+        
+        if cell.state.is_mine:
+            self.game_over = True
+            self._reveal_all_mines()
+            return
+            
+        # Recursive flood fill for empty cells
+        if cell.state.adjacent == 0:
+            stack = [(col, row)]
+            while stack:
+                curr_col, curr_row = stack.pop()
+                for n_col, n_row in self.neighbors(curr_col, curr_row):
+                    n_idx = self.index(n_col, n_row)
+                    n_cell = self.cells[n_idx]
+                    if not n_cell.state.is_revealed and not n_cell.state.is_flagged:
+                        n_cell.state.is_revealed = True
+                        self.revealed_count += 1
+                        if n_cell.state.adjacent == 0:
+                            stack.append((n_col, n_row))
+
+        self._check_win()
+
+    def toggle_flag(self, col: int, row: int) -> None:
+        if not self.is_inbounds(col, row) or self.game_over or self.win:
+            return
+        cell = self.cells[self.index(col, row)]
+        if not cell.state.is_revealed:
+            cell.state.is_flagged = not cell.state.is_flagged
+
+    def flagged_count(self) -> int:
+        return sum(1 for cell in self.cells if cell.state.is_flagged)
+
+    def _reveal_all_mines(self) -> None:
+        for cell in self.cells:
+            if cell.state.is_mine:
+                cell.state.is_revealed = True
+
+    def _check_win(self) -> None:
+        total_cells = self.cols * self.rows
+        if self.revealed_count == total_cells - self.num_mines and not self.game_over:
+            self.win = True
+
+    def get_hint(self) -> Tuple[int, int] | None:
+        """Issue #3: Returns a random unrevealed safe cell."""
+        safe_unrevealed = [
+            (cell.col, cell.row) for cell in self.cells
+            if not cell.state.is_mine and not cell.state.is_revealed
+        ]
+        if safe_unrevealed:
+            return random.choice(safe_unrevealed)
+        return None
