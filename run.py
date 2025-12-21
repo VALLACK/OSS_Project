@@ -8,7 +8,8 @@ This module owns:
 
 The logic lives in components.Board; this module should not implement rules.
 """
-
+import json
+import os
 import sys
 
 import pygame
@@ -65,18 +66,22 @@ class Renderer:
                 pass
         pygame.draw.rect(self.screen, config.color_grid, rect, 1)
 
-    def draw_header(self, remaining_mines: int, time_text: str) -> None:
-        """Draw the header bar containing remaining mines and elapsed time."""
+    def draw_header(self, remaining_mines: int, time_text: str, high_score: int | None) -> None:
+        """헤더에 남은 지뢰, 현재 시간, 그리고 하이 스코어를 표시합니다."""
         pygame.draw.rect(
             self.screen,
             config.color_header,
             Rect(0, 0, config.width, config.margin_top - 4),
         )
-        left_text = f"Mines: {remaining_mines}"
-        right_text = f"Time: {time_text}"
-        left_label = self.header_font.render(left_text, True, config.color_header_text)
-        right_label = self.header_font.render(right_text, True, config.color_header_text)
+        
+        hs_text = f"Best: {high_score}s" if high_score is not None else "Best: --"
+        
+        left_label = self.header_font.render(f"Mines: {remaining_mines}", True, config.color_header_text)
+        center_label = self.header_font.render(hs_text, True, config.color_header_text)
+        right_label = self.header_font.render(f"Time: {time_text}", True, config.color_header_text)
+        
         self.screen.blit(left_label, (10, 12))
+        self.screen.blit(center_label, (config.width // 2 - center_label.get_width() // 2, 12))
         self.screen.blit(right_label, (config.width - right_label.get_width() - 10, 12))
 
     def draw_result_overlay(self, text: str | None) -> None:
@@ -140,33 +145,28 @@ class InputController:
 class Game:
     """Main application object orchestrating loop and high-level state."""
 
-    def __init__(self):
-        pygame.init()
-        pygame.display.set_caption(config.title)
+    def load_high_score(self):
+        """난이도별 하이 스코어를 파일에서 불러옵니다."""
+        self.high_score_file = "high_scores.json"
+        if os.path.exists(self.high_score_file):
+            with open(self.high_score_file, "r") as f:
+                return json.load(f)
+        return {"easy": None, "medium": None, "hard": None}
+
+    def save_high_score(self):
+        """현재 난이도의 기록이 최고 기록보다 좋으면 저장합니다."""
+        current_time_sec = self._elapsed_ms() // 1000
+        scores = self.load_high_score()
         
-        # Default starting difficulty
-        self.difficulty = 'easy'
-        settings = config.difficulties[self.difficulty]
+        best_score = scores.get(self.difficulty)
         
-        # Set dynamic dimensions
-        self.cols = settings['cols']
-        self.rows = settings['rows']
-        self.num_mines = settings['num_mines']
-        
-        # Calculate screen size based on cols/rows
-        width = config.margin_left + config.margin_right + self.cols * config.cell_size
-        height = config.margin_top + config.margin_bottom + self.rows * config.cell_size
-        self.screen = pygame.display.set_mode((width, height))
-        
-        self.clock = pygame.time.Clock()
-        self.board = Board(self.cols, self.rows, self.num_mines)
-        self.renderer = Renderer(self.screen, self.board)
-        self.input = InputController(self)
-        self.highlight_targets = set()
-        self.highlight_until_ms = 0
-        self.started = False
-        self.start_ticks_ms = 0
-        self.end_ticks_ms = 0
+        # 첫 승리이거나 기존 기록보다 빠른 경우
+        if best_score is None or current_time_sec < best_score:
+            scores[self.difficulty] = current_time_sec
+            with open(self.high_score_file, "w") as f:
+                json.dump(scores, f)
+            return True # 새로운 기록 달성
+        return False
 
     def reset(self, diff_name=None):
         """Reset the game state and start a new board with optional new difficulty."""
